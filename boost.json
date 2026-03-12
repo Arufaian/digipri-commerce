@@ -9,12 +9,10 @@
     "packages": [
         "laravel/fortify"
     ],
-    "sail": true,
+    "sail": false,
     "skills": [
         "wayfinder-development",
         "pest-testing",
-        "inertia-svelte-development",
-        "tailwindcss-development",
         "developing-with-fortify"
     ]
 }
