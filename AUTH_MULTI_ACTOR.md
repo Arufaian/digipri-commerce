@@ -39,10 +39,10 @@ Saat ini aplikasi Anda memiliki:
 Yang akan kita tambahkan:
 
 - ✅ `role` column di tabel users (`'admin'` atau `'customer'`)
-- ✅ Middleware redirect logic yang mengarahkan user ke dashboard mereka
+- ✅ Middleware redirect logic yang mengarahkan admin ke dashboard mereka
 - ✅ Public catalog pages (/products, /services) accessible tanpa login
 - ✅ Admin dashboard (/admin/dashboard)
-- ✅ Customer dashboard + profile management (/customer/dashboard, /customer/profile)
+- ✅ Customer: langsung ke storefront setelah login (tidak ada customer dashboard)
 
 ### Mengapa Pattern Ini?
 
@@ -94,12 +94,10 @@ ADMIN AREA (/admin/*)
 ├── /admin/orders
 └── ...admin-only routes
 
-CUSTOMER AREA (/customer/*)
-├── /customer/dashboard
-├── /customer/orders
-├── /customer/profile
-├── /customer/addresses
-└── ...customer-specific routes
+CUSTOMER AREA (After Login)
+├── Redirect ke / (storefront - halaman yang sama saat pertama kali mengakses website)
+├── /customer/* routes (akan dikembangkan di masa depan)
+└── ...customer-specific routes (belum diimplementasi)
 ```
 
 ### Database Schema
@@ -140,12 +138,14 @@ Mari kita lihat bagaimana auth bekerja saat ini di aplikasi Anda:
 
 ```
 USER FLOW:
-1. User visit /  (Welcome page)
+1. User visit /  (Welcome page / storefront)
 2. User click Login button
 3. Form POST to /login
 4. Fortify AuthenticatedSessionController handle POST
 5. Check email + password
-6. If valid: Create session, redirect to /dashboard
+6. If valid: Create session, redirect based on role:
+   - Admin → /admin/dashboard
+   - Customer → / (storefront)
 7. HandleInertiaRequests middleware inject user into props
 ```
 
@@ -389,13 +389,17 @@ class AuthenticateByRole
      * 3. Middleware ini intercept request ke /dashboard
      * 4. Check user.role:
      *    - Jika 'admin' → redirect ke /admin/dashboard
-     *    - Jika 'customer' → stay di /dashboard
+     *    - Jika 'customer' → redirect ke / (storefront)
      */
     public function handle(Request $request, Closure $next): Response
     {
-        if ($request->user() && $request->path() === 'dashboard') {
-            if ($request->user()->isAdmin()) {
+        if ($request->user()) {
+            if ($request->user()->isAdmin() && $request->path() === 'dashboard') {
                 return redirect('/admin/dashboard');
+            }
+
+            if ($request->user()->isCustomer() && $request->path() === 'dashboard') {
+                return redirect('/');
             }
         }
 
@@ -430,12 +434,14 @@ use App\Http\Middleware\AuthenticateByRole;
 5. Middleware AuthenticateByRole intercept request
 6. Check: user.role == 'admin'?
    - YES: redirect ke /admin/dashboard
-   - NO: continue, show /dashboard
+   - Check: user.role == 'customer'?
+     - YES: redirect ke / (storefront)
+     - NO: continue
 ```
 
-### Step 4: Create Admin & Customer Dashboard Controllers
+### Step 4: Create Admin Dashboard Controller
 
-Sekarang kita buat controllers untuk handle admin dan customer dashboards.
+Sekarang kita buat controller untuk handle admin dashboard.
 
 **Admin Dashboard Controller:**
 
@@ -475,40 +481,9 @@ class DashboardController extends Controller
 }
 ```
 
-**Customer Dashboard Controller:**
+### Step 5: Create AdminOnly Middleware
 
-```bash
-sail artisan make:controller Customer/DashboardController
-```
-
-**File**: `app/Http/Controllers/Customer/DashboardController.php`
-
-```php
-<?php
-
-namespace App\Http\Controllers\Customer;
-
-use Inertia\Inertia;
-use Inertia\Response;
-use App\Http\Controllers\Controller;
-
-class DashboardController extends Controller
-{
-    /**
-     * Display customer dashboard.
-     */
-    public function show(): Response
-    {
-        return Inertia::render('customer/Dashboard', [
-            'recent_orders' => auth()->user()->orders ?? [],
-        ]);
-    }
-}
-```
-
-### Step 5: Create AdminOnly & CustomerOnly Middleware
-
-Sekarang kita perlu 2 middleware tambahan untuk protect admin dan customer routes:
+Sekarang kita buat middleware untuk protect admin routes:
 
 **Create Admin Middleware:**
 
@@ -546,7 +521,11 @@ class AdminOnly
 }
 ```
 
-**Create Customer Middleware:**
+### Catatan: CustomerOnly Middleware (Untuk Masa Depan)
+
+Middleware `CustomerOnly` tidak diperlukan saat ini karena customer setelah login akan langsung diarahkan ke storefront (`/`). Namun, middleware ini akan diperlukan ketika Anda mengimplementasikan route-route khusus customer seperti `/customer/orders`, `/customer/profile`, dan lainnya.
+
+**Cara mengimplementasi di masa depan:**
 
 ```bash
 sail artisan make:middleware CustomerOnly
@@ -585,7 +564,7 @@ class CustomerOnly
 
 ```php
 use App\Http\Middleware\AdminOnly;
-use App\Http\Middleware\CustomerOnly;
+use App\Http\Middleware\CustomerOnly; // Untuk masa depan
 use App\Http\Middleware\AuthenticateByRole;
 
 ->withMiddleware(function (Middleware $middleware) {
@@ -594,7 +573,7 @@ use App\Http\Middleware\AuthenticateByRole;
     // Add named middleware untuk digunakan di routes
     $middleware->alias([
         'admin' => AdminOnly::class,
-        'customer' => CustomerOnly::class,
+        // 'customer' => CustomerOnly::class, // Aktifkan ketika sudah ada /customer/* routes
     ]);
 
     // Append AuthenticateByRole ke web middleware stack
@@ -615,7 +594,9 @@ Sekarang kita update routes untuk add `/admin/\*`` routes.
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
-use App\Http\Controllers\Customer\DashboardController as CustomerDashboardController;
+
+// Catatan: CustomerDashboardController tidak diperlukan karena
+// customer langsung diarahkan ke storefront setelah login
 
 // PUBLIC ROUTES (tanpa login)
 Route::get('/', function () {
@@ -639,11 +620,11 @@ Route::get('/services', function () {
 // POST /register - RegisteredUserController@store
 // POST /logout - AuthenticatedSessionController@destroy
 
-// PROTECTED ROUTES (require auth)
-Route::middleware(['auth', 'verified'])->group(function () {
-    // Home/Dashboard (untuk customer)
+// PROTECTED ROUTES (require auth - untuk admin saja, customer langsung ke /)
+Route::middleware(['auth', 'verified', 'admin'])->group(function () {
+    // Admin dashboard (customer akan di-redirect ke / oleh middleware)
     Route::get('/dashboard', function () {
-        return inertia('Dashboard');
+        return inertia('admin/Dashboard');
     })->name('dashboard');
 
     // Settings routes (shared for both admin & customer)
@@ -663,22 +644,35 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     })->name('orders.index');
 });
 
-// CUSTOMER ROUTES
-Route::middleware(['auth', 'verified', 'customer'])->prefix('customer')->name('customer.')->group(function () {
-    Route::get('/dashboard', [CustomerDashboardController::class, 'show'])->name('dashboard');
+// CATATAN: CUSTOMER ROUTES
+// Untuk saat ini, customer tidak memiliki routes khusus karena:
+// 1. Setelah login, customer langsung diarahkan ke / (storefront)
+// 2. Semua fitur yang diperlukan customer dapat diakses langsung dari storefront
+//
+// Di masa depan, ketika Anda ingin menambahkan fitur khusus customer seperti:
+// - /customer/orders (riwayat pesanan)
+// - /customer/profile (profil pengguna)
+// - /customer/addresses (alamat pengiriman)
+// - /customer/cart (keranjang belanja)
+//
+// Anda dapat mengaktifkan routes di bawah ini dengan:
+// 1. Mengaktifkan middleware 'customer' di bootstrap/app.php
+// 2. Menambahkan route di bawah ini
 
-    Route::get('/profile', function () {
-        return inertia('customer/Profile');
-    })->name('profile');
-
-    Route::get('/orders', function () {
-        return inertia('customer/Orders');
-    })->name('orders');
-
-    Route::get('/addresses', function () {
-        return inertia('customer/Addresses');
-    })->name('addresses');
-});
+// Contoh implementasi di masa depan:
+// Route::middleware(['auth', 'verified', 'customer'])->prefix('customer')->name('customer.')->group(function () {
+//     Route::get('/orders', function () {
+//         return inertia('customer/Orders');
+//     })->name('orders');
+//
+//     Route::get('/profile', function () {
+//         return inertia('customer/Profile');
+//     })->name('profile');
+//
+//     Route::get('/addresses', function () {
+//         return inertia('customer/Addresses');
+//     })->name('addresses');
+// });
 ```
 
 ---
@@ -700,24 +694,25 @@ Setelah Anda implement langkah-langkah di atas, berikut adalah flow yang terjadi
 │  1. AuthenticatedSessionController@store                     │
 │  2. Validate email & password                                │
 │  3. Session::regenerate()                                    │
-│  4. Redirect to 'home' (/dashboard)                          │
+│  4. Redirect to 'home' (/dashboard)                         │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│              MIDDLEWARE AuthenticateByRole                   │
-│  1. Check: path == 'dashboard' && authenticated?             │
+│              MIDDLEWARE AuthenticateByRole                    │
+│  1. Check: path == 'dashboard' && authenticated?              │
 │  2. Check: user->isAdmin()?                                  │
 │     - YES: redirect('/admin/dashboard')                      │
-│     - NO: continue (stay at /dashboard)                      │
+│  3. Check: user->isCustomer()?                              │
+│     - YES: redirect('/') (storefront)                        │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│         DESTINATION: /dashboard OR /admin/dashboard          │
+│         DESTINATION: / (storefront) OR /admin/dashboard     │
 │                                                               │
-│  If /dashboard:                                              │
+│  If / (storefront):                                          │
 │  - HandleInertiaRequests middleware inject user              │
-│  - Render Dashboard.svelte component                         │
-│  - Show customer-specific content                            │
+│  - Render storefront page (Welcome/Products)                 │
+│  - Customer dapat mengakses cart, melihat produk, dll       │
 │                                                               │
 │  If /admin/dashboard:                                        │
 │  - Protected by AdminOnly middleware                         │
@@ -726,6 +721,44 @@ Setelah Anda implement langkah-langkah di atas, berikut adalah flow yang terjadi
 │  - Show admin-specific content                               │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+┌─────────────────────────────────────────────────────────────┐
+│ USER LOGIN │
+│ 1. User POST /login (email + password) │
+└─────────────────────────────────────────────────────────────┘
+↓
+┌─────────────────────────────────────────────────────────────┐
+│ FORTIFY AUTHENTICATION │
+│ 1. AuthenticatedSessionController@store │
+│ 2. Validate email & password │
+│ 3. Session::regenerate() │
+│ 4. Redirect to 'home' (/dashboard) │
+└─────────────────────────────────────────────────────────────┘
+↓
+┌─────────────────────────────────────────────────────────────┐
+│ MIDDLEWARE AuthenticateByRole │
+│ 1. Check: path == 'dashboard' && authenticated? │
+│ 2. Check: user->isAdmin()? │
+│ - YES: redirect('/admin/dashboard') │
+│ - NO: continue (stay at /dashboard) │
+└─────────────────────────────────────────────────────────────┘
+↓
+┌─────────────────────────────────────────────────────────────┐
+│ DESTINATION: /dashboard OR /admin/dashboard │
+│ │
+│ If /dashboard: │
+│ - HandleInertiaRequests middleware inject user │
+│ - Render Dashboard.svelte component │
+│ - Show customer-specific content │
+│ │
+│ If /admin/dashboard: │
+│ - Protected by AdminOnly middleware │
+│ - HandleInertiaRequests middleware inject user │
+│ - Render admin/Dashboard.svelte component │
+│ - Show admin-specific content │
+└─────────────────────────────────────────────────────────────┘
+
+````
 
 ### Detailed Middleware Order
 
@@ -749,7 +782,7 @@ Di bootstrap/app.php, middleware execute dalam order ini:
     //    - admin (verify user is admin)
     //    - customer (verify user is customer)
 });
-```
+````
 
 ### How Fortify Handles Redirect
 
@@ -762,7 +795,7 @@ Setelah login, Fortify redirect ke route named `'home'` by default. Anda bisa cu
 Dengan middleware approach, lebih clean karena:
 
 - Admin otomatis di-redirect ke /admin/dashboard
-- Customer stay di /dashboard
+- Customer di-redirect ke / (storefront)
 
 ---
 
@@ -774,7 +807,7 @@ Berikut adalah struktur routes lengkap setelah multi-actor implementation:
 
 ```
 PUBLIC ROUTES (No Auth Required)
-├── GET  /                          → Welcome page
+├── GET  /                          → Storefront (Welcome page)
 ├── GET  /products                  → Product catalog
 ├── GET  /services                  → Services catalog
 ├── GET  /products/{id}             → Product detail
@@ -794,8 +827,10 @@ FORTIFY ROUTES (Auto-registered)
 ├── GET  /two-factor-challenge      → 2FA entry form
 ├── POST /two-factor-challenge      → Verify 2FA code
 │
-PROTECTED ROUTES (Auth + Verified)
-├── GET  /dashboard                 → Customer dashboard (redirect admin to /admin/dashboard)
+ADMIN ROUTES (Auth + Verified + Admin Role)
+├── GET  /admin/dashboard           → Admin dashboard
+├── GET  /admin/products            → Manage products
+├── GET  /admin/orders              → Manage orders
 │
 SETTINGS ROUTES (Auth + Verified)
 ├── GET  /settings/profile          → Edit profile
@@ -804,18 +839,11 @@ SETTINGS ROUTES (Auth + Verified)
 ├── GET  /settings/password         → Change password
 ├── PUT  /settings/password         → Update password
 ├── GET  /settings/appearance       → Appearance settings
-├── GET  /settings/two-factor      → 2FA settings
+├── GET  /settings/two-factor       → 2FA settings
 │
-ADMIN ROUTES (Auth + Verified + Admin Role)
-├── GET  /admin/dashboard           → Admin dashboard
-├── GET  /admin/products            → Manage products
-├── GET  /admin/orders              → Manage orders
-│
-CUSTOMER ROUTES (Auth + Verified + Customer Role)
-├── GET  /customer/dashboard        → Customer dashboard
-├── GET  /customer/profile          → Edit profile
-├── GET  /customer/orders           → Order history
-├── GET  /customer/addresses        → Manage addresses
+CUSTOMER AREA (After Login)
+├── Redirect ke / (storefront) - Tidak ada customer dashboard
+├── /customer/* routes (akan dikembangkan di masa depan)
 ```
 
 ### Route File Organization
@@ -841,27 +869,30 @@ Route::get('/orders', function () {
 })->name('orders.index');
 ```
 
-**File**: `routes/customer.php`
+**Catatan: File routes/customer.php**
+
+Untuk saat ini, file `routes/customer.php` tidak diperlukan karena customer setelah login langsung diarahkan ke storefront (`/`). Di masa depan, ketika Anda ingin menambahkan routes khusus customer, Anda dapat membuat file ini:
+
+**File**: `routes/customer.php` (Untuk Masa Depan)
 
 ```php
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Customer\DashboardController;
 
-Route::get('/dashboard', [DashboardController::class, 'show'])->name('dashboard');
-
-Route::get('/profile', function () {
-    return inertia('customer/Profile');
-})->name('profile');
-
-Route::get('/orders', function () {
-    return inertia('customer/Orders');
-})->name('orders');
-
-Route::get('/addresses', function () {
-    return inertia('customer/Addresses');
-})->name('addresses');
+// routes untuk customer (belum diimplementasi)
+// Contoh:
+// Route::get('/orders', function () {
+//     return inertia('customer/Orders');
+// })->name('orders');
+//
+// Route::get('/profile', function () {
+//     return inertia('customer/Profile');
+// })->name('profile');
+//
+// Route::get('/addresses', function () {
+//     return inertia('customer/Addresses');
+// })->name('addresses');
 ```
 
 **Usage di web.php:**
@@ -875,13 +906,14 @@ Route::middleware(['auth', 'verified', 'admin'])
         require __DIR__ . '/admin.php';
     });
 
-// CUSTOMER ROUTES
-Route::middleware(['auth', 'verified', 'customer'])
-    ->prefix('customer')
-    ->name('customer.')
-    ->group(function () {
-        require __DIR__ . '/customer.php';
-    });
+// CUSTOMER ROUTES (Belum diimplementasi - customer langsung ke storefront)
+// Aktifkan di masa depan ketika sudah ada /customer/* routes:
+// Route::middleware(['auth', 'verified', 'customer'])
+//     ->prefix('customer')
+//     ->name('customer.')
+//     ->group(function () {
+//         require __DIR__ . '/customer.php';
+//     });
 ```
 
 ---
@@ -958,10 +990,13 @@ export type Auth = {
                     <button>Logout</button>
                 </form>
             {:else if user.role === 'customer'}
+                <a href="/" class="nav-link">Storefront</a>
                 <a href="/products" class="nav-link">Products</a>
                 <a href="/services" class="nav-link">Services</a>
+                <!-- Menu lain akan ditambahkan di masa depan:
                 <a href="/customer/orders" class="nav-link">My Orders</a>
                 <a href="/customer/profile" class="nav-link">Profile</a>
+                -->
                 <form method="POST" action="/logout">
                     <button>Logout</button>
                 </form>
@@ -971,23 +1006,52 @@ export type Auth = {
 </nav>
 ```
 
-**Example 2: Dashboard Component dengan Role-Specific Content**
+**Example 2: Storefront Component ( untuk Customer) dan Admin Dashboard**
+
+Karena customer tidak memiliki dashboard khusus, berikut adalah cara mengorganisir komponen:
 
 ```svelte
-<!-- resources/js/pages/Dashboard.svelte -->
+<!-- resources/js/pages/Storefront.svelte (Untuk Customer) -->
+<script lang="ts">
+    import { page } from '@inertiajs/svelte';
+    import type { User } from '@/types/auth';
+
+    $: user = $page.props.auth.user as User;
+</script>
+
+<div>
+    <h1>Welcome to Our Store, {user.name}!</h1>
+
+    <div class="storefront-content">
+        <section>
+            <h2>Featured Products</h2>
+            <!-- Product listings -->
+        </section>
+
+        <section>
+            <h2>Services</h2>
+            <!-- Service listings -->
+        </section>
+    </div>
+</div>
+```
+
+**Example 2b: Admin Dashboard Component**
+
+```svelte
+<!-- resources/js/pages/admin/Dashboard.svelte -->
 <script lang="ts">
     import { page } from '@inertiajs/svelte';
     import type { User } from '@/types/auth';
 
     $: user = $page.props.auth.user as User;
     $: isAdmin = user.role === 'admin';
-    $: isCustomer = user.role === 'customer';
 </script>
 
-<div>
-    <h1>Welcome, {user.name}!</h1>
+{#if isAdmin}
+    <div>
+        <h1>Welcome, {user.name}!</h1>
 
-    {#if isAdmin}
         <div class="admin-dashboard">
             <h2>Admin Dashboard</h2>
 
@@ -1019,31 +1083,8 @@ export type Auth = {
                 <a href="/admin/orders" class="btn btn-primary">View Orders</a>
             </div>
         </div>
-    {:else if isCustomer}
-        <div class="customer-dashboard">
-            <h2>Customer Dashboard</h2>
-
-            <div class="customer-sections">
-                <section>
-                    <h3>My Orders</h3>
-                    <a href="/customer/orders" class="link">View all orders →</a
-                    >
-                </section>
-
-                <section>
-                    <h3>Quick Links</h3>
-                    <ul>
-                        <li><a href="/products">Browse Products</a></li>
-                        <li><a href="/services">View Services</a></li>
-                        <li>
-                            <a href="/customer/addresses">Manage Addresses</a>
-                        </li>
-                    </ul>
-                </section>
-            </div>
-        </div>
-    {/if}
-</div>
+    </div>
+{/if}
 
 <style>
     .stats-grid {
@@ -1301,24 +1342,37 @@ class CustomerAuthenticationTest extends TestCase
 
         $this->assertAuthenticated();
 
-        // Customer should stay on dashboard (not redirect)
-        $response->assertRedirect('/dashboard');
+        // Customer should be redirected to storefront (/)
+        $response->assertRedirect('/');
     }
 
-    public function test_customer_can_access_customer_routes(): void
+    public function test_customer_can_access_public_routes(): void
     {
         $customer = User::factory()->customer()->create();
 
-        $response = $this->actingAs($customer)->get('/customer/orders');
+        // Customer can access storefront
+        $response = $this->actingAs($customer)->get('/');
+        $response->assertStatus(200);
 
+        // Customer can access products
+        $response = $this->actingAs($customer)->get('/products');
         $response->assertStatus(200);
     }
 
-    public function test_admin_cannot_access_customer_routes(): void
+    public function test_customer_cannot_access_admin_dashboard(): void
     {
-        $admin = User::factory()->admin()->create();
+        $customer = User::factory()->customer()->create();
 
-        $response = $this->actingAs($admin)->get('/customer/orders');
+        $response = $this->actingAs($customer)->get('/admin/dashboard');
+
+        // Should be forbidden (403)
+        $response->assertStatus(403);
+    }
+
+    // CATATAN: Test untuk /customer/* routes akan ditambahkan
+    // ketika fitur tersebut diimplementasi di masa depan
+}
+```
 
         $response->assertStatus(403);
     }
@@ -1333,8 +1387,10 @@ class CustomerAuthenticationTest extends TestCase
             ->component('Products/Index')
         );
     }
+
 }
-```
+
+````
 
 **Test Middleware Redirect:**
 
@@ -1359,19 +1415,21 @@ class AuthenticateByRoleTest extends TestCase
         $response->assertRedirect('/admin/dashboard');
     }
 
-    public function test_customer_not_redirected_from_dashboard(): void
+    public function test_customer_redirected_from_dashboard_to_storefront(): void
     {
         $customer = User::factory()->customer()->create();
 
         $response = $this->actingAs($customer)->get('/dashboard');
 
-        $response->assertStatus(200);
-        $response->assertInertia(fn ($page) => $page
-            ->component('Dashboard')
-        );
+        // Customer should be redirected to storefront
+        $response->assertRedirect('/');
     }
 }
 ```
+        );
+    }
+}
+````
 
 ### Run Tests
 
@@ -1665,7 +1723,8 @@ dd($user->toArray());  # See all user data
 
 ```bash
 sail artisan middleware:list
-# Seharusnya AuthenticateByRole, AdminOnly, CustomerOnly di sini
+# Seharusnya AuthenticateByRole dan AdminOnly di sini
+# CustomerOnly akan muncul setelah diaktifkan untuk /customer/* routes
 ```
 
 ---
@@ -1678,8 +1737,9 @@ Selamat! Anda sudah memahami cara implement multi-actor authentication dalam Lar
 
 ✅ Menambahkan kolom `role` ke tabel users  
 ✅ Membuat middleware redirect berdasarkan role  
-✅ Membuat controllers untuk admin & customer dashboards  
-✅ Membuat routes terpisah untuk /admin/_ dan /customer/_  
+✅ Membuat controller untuk admin dashboard  
+✅ Membuat routes terpisah untuk /admin/\*  
+✅ Customer redirect ke storefront setelah login (tidak ada customer dashboard)  
 ✅ Implementasi conditional rendering di frontend  
 ✅ Membuat tests untuk multi-actor flows
 
@@ -1690,17 +1750,23 @@ Selamat! Anda sudah memahami cara implement multi-actor authentication dalam Lar
     - Order management
     - Analytics dashboard
 
-2. **Implementasi Customer Area**
+2. **Implementasi Customer Features** (di masa depan)
+    - Cart functionality
     - Order history & tracking
     - Address management
     - Order checkout flow
 
-3. **Enhanced Authorization**
+3. **Implementasi /customer/\* routes**
+    - Aktifkan middleware CustomerOnly
+    - Tambahkan routes untuk profile, orders, addresses, dll
+
+4. **Enhanced Authorization**
     - Laravel Gates & Policies untuk granular permissions
 
-4. **Frontend Improvements**
+5. **Frontend Improvements**
     - Responsive admin dashboard
-    - Customer-friendly product pages
+    - Customer-friendly storefront
+    - Cart dan checkout UI
 
 ### File Summary
 
@@ -1713,14 +1779,13 @@ NEW/MODIFIED FILES:
 ├── app/Http/Middleware/
 │   ├── AuthenticateByRole.php  (NEW)
 │   ├── AdminOnly.php  (NEW)
-│   └── CustomerOnly.php  (NEW)
+│   └── CustomerOnly.php  (NEW - untuk masa depan)
 ├── app/Http/Controllers/
-│   ├── Admin/DashboardController.php  (NEW)
-│   └── Customer/DashboardController.php  (NEW)
+│   └── Admin/DashboardController.php  (NEW)
 ├── routes/
 │   ├── web.php  (MODIFIED)
-│   ├── admin.php  (NEW)
-│   └── customer.php  (NEW)
+│   └── admin.php  (NEW)
+│   └── customer.php  (CATATAN: belum diperlukan saat ini)
 ├── bootstrap/
 │   └── app.php  (MODIFIED - register middleware)
 ├── database/factories/
@@ -1743,11 +1808,11 @@ sail artisan make:migration add_role_to_users_table
 # Create middleware
 sail artisan make:middleware AuthenticateByRole
 sail artisan make:middleware AdminOnly
-sail artisan make:middleware CustomerOnly
+sail artisan make:middleware CustomerOnly  # Untuk masa depan
 
 # Create controllers
 sail artisan make:controller Admin/DashboardController
-sail artisan make:controller Customer/DashboardController
+# Customer Dashboard Controller TIDAK diperlukan saat ini
 
 # Run migration
 sail artisan migrate
