@@ -25,11 +25,11 @@ Use `search-docs` for detailed Wayfinder patterns and documentation.
 
 Run after route changes if Vite plugin isn't installed:
 ```bash
-php artisan wayfinder:generate --no-interaction
+vendor/bin/sail artisan wayfinder:generate --no-interaction
 ```
 For form helpers, use `--with-form` flag:
 ```bash
-php artisan wayfinder:generate --with-form --no-interaction
+vendor/bin/sail artisan wayfinder:generate --with-form --no-interaction
 ```
 
 ### Import Patterns
@@ -68,19 +68,15 @@ show(1, { query: { page: 1 } }) // "/posts/1?page=1"
 
 ## Wayfinder + Inertia
 
-Use Wayfinder with `useForm`:
-
-<!-- Wayfinder useForm -->
-```typescript
-import { store } from "@/actions/App/Http/Controllers/ExampleController";
-
-const form = useForm({ name: "My Big Post" });
-form.submit(store());
+Use Wayfinder with the `<Form>` component:
+<!-- Wayfinder Form (Svelte) -->
+```svelte
+<Form {...store.form()}><input name="title" /></Form>
 ```
 
 ## Verification
 
-1. Run `php artisan wayfinder:generate` to regenerate routes if Vite plugin isn't installed
+1. Run `vendor/bin/sail artisan wayfinder:generate` to regenerate routes if Vite plugin isn't installed
 2. Check TypeScript imports resolve correctly
 3. Verify route URLs match expected paths
 
