@@ -66,9 +66,8 @@ class User extends Authenticatable
         return $this->role === $role;
     }
 
-    // cek apakah tabel user tidak kosong
     public static function hasUsers(): bool
     {
-        return self::count() > 0;
+        return self::query()->exists();
     }
 }
