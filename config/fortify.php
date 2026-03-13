@@ -73,7 +73,9 @@ return [
     |
     */
 
-    'home' => '/dashboard',
+    'home' => function () {
+        return auth()->user()->isAdmin() ? '/admin/dashboard' : '/';
+    },
 
     /*
     |--------------------------------------------------------------------------
