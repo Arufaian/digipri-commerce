@@ -35,14 +35,15 @@ Saat ini aplikasi Anda memiliki:
 - ✅ Email verification
 - ✅ Two-factor authentication (TOTP)
 - ✅ Svelte + Inertia.js frontend
+- ✅ `role` column di tabel users (`'admin'` atau `'customer'`) - via migration
+- ✅ User model dengan role-related methods (isAdmin, isCustomer, isRole) - already implemented
 
-Yang akan kita tambahkan:
+Yang masih perlu ditambahkan:
 
-- ✅ `role` column di tabel users (`'admin'` atau `'customer'`)
-- ✅ Middleware redirect logic yang mengarahkan admin ke dashboard mereka
-- ✅ Public catalog pages (/products, /services) accessible tanpa login
-- ✅ Admin dashboard (/admin/dashboard)
-- ✅ Customer: langsung ke storefront setelah login (tidak ada customer dashboard)
+- 🔲 Middleware redirect logic yang mengarahkan admin ke dashboard mereka
+- 🔲 Public catalog pages (/products, /services) accessible tanpa login
+- 🔲 Admin dashboard (/admin/dashboard)
+- 🔲 Customer: langsung ke storefront setelah login (tidak ada customer dashboard)
 
 ### Mengapa Pattern Ini?
 
@@ -50,10 +51,10 @@ Yang akan kita tambahkan:
 
 1. ✅ **Sederhana** - Hanya tambah 1 kolom `role` di users table
 2. ✅ **Secure** - Fortify handle password hashing dan validation
-3. ✅ **Maintainable** - Single login form, middleware handle routing
+3. ✅ **Maintainable** - Single login form, middleware handle routing berdasarkan role
 4. ✅ **Scalable** - Mudah tambah actor baru (seller, vendor, dll)
-5. ✅ **Fortify-native** - Tidak perlu override Fortify behavior
-6. ✅ **Svelte-friendly** - Conditional rendering di frontend mudah
+5. ✅ **Fortify-compatible** - Tidak perlu override Fortify behavior, hanya menambahkan middleware
+6. ✅ **Svelte-friendly** - Conditional rendering di frontend mudah dengan data role yang tersedia
 
 ### Persyaratan
 
@@ -62,6 +63,8 @@ Sebelum memulai, pastikan Anda sudah punya:
 - ✅ Laravel 12 dengan Fortify v1 (sudah ada di aplikasi Anda)
 - ✅ Inertia.js v2 dan Svelte (sudah ada di aplikasi Anda)
 - ✅ Database migration setup (sudah ada)
+- ✅ `role` column ditambahkan ke users table (sudah ada via migration: 2026_03_12_211457_add_role_to_users_table.php)
+- ✅ User model dengan role-related methods (isAdmin, isCustomer, isRole) (sudah diimplementasi)
 - ✅ Familiarity dengan Laravel routes dan middleware (basic level)
 
 ---
@@ -143,9 +146,7 @@ USER FLOW:
 3. Form POST to /login
 4. Fortify AuthenticatedSessionController handle POST
 5. Check email + password
-6. If valid: Create session, redirect based on role:
-   - Admin → /admin/dashboard
-   - Customer → / (storefront)
+6. If valid: Create session, redirect to Fortify's default home (/dashboard)
 7. HandleInertiaRequests middleware inject user into props
 ```
 
@@ -192,7 +193,7 @@ Fortify's built-in controller (Anda tidak perlu edit)
 
 **Step 3: User redirected ke dashboard**
 
-Saat ini redirect hardcoded ke `/dashboard`. Di step ini, Fortify tidak tahu tentang roles.
+Saat ini redirect hardcoded ke `/dashboard` karena itu adalah nilai default dari Fortify's 'home'. Di step ini, Fortify tidak tahu tentang roles karena Fortify tidak dirancang untuk multi-role systems dari awal.
 
 **Step 4: Middleware inject user ke props**
 
@@ -214,13 +215,13 @@ Setiap Inertia response akan include `auth.user` di frontend.
 
 ## Implementasi Multi-Actor (Step-by-Step)
 
-Sekarang kita akan menambahkan multi-actor support dengan 5 langkah besar:
+Kita akan menambahkan multi-actor support dengan langkah-langkah berikut, beberapa sudah dilakukan:
 
-1. **Add `role` column ke users table (Migration)**
-2. **Update User model untuk handle roles**
-3. **Create middleware untuk redirect based on role**
-4. **Create controller untuk manage admin/customer logic**
-5. **Create routes untuk /admin/_ dan /customer/_**
+1. ✅ **Add `role` column ke users table (Migration)** - Sudah dilakukan via migration
+2. ✅ **Update User model untuk handle roles** - Sudah dilakukan dengan menambahkan methods isAdmin(), isCustomer(), isRole()
+3. 🔲 **Create middleware untuk redirect based on role**
+4. 🔲 **Create controller untuk manage admin/customer logic**
+5. 🔲 **Create routes untuk /admin/_ dan /customer/_**
 
 ### Step 1: Create Migration untuk Add Role Column
 
@@ -277,7 +278,7 @@ DESCRIBE users;
 
 ### Step 2: Update User Model
 
-Edit `app/Models/User.php` untuk add role-related methods:
+Edit `app/Models/User.php` untuk add role-related methods (SUDAH DILAKUKAN):
 
 ```php
 <?php
@@ -297,7 +298,7 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-        'role',  // ADD THIS
+        'role',  // SUDAH DITAMBAHKAN
     ];
 
     protected $hidden = [
@@ -316,7 +317,7 @@ class User extends Authenticatable
         ];
     }
 
-    // ADD HELPER METHODS
+    // HELPER METHODS SUDAH DITAMBAHKAN
 
     /**
      * Check if user is admin.
@@ -344,7 +345,7 @@ class User extends Authenticatable
 }
 ```
 
-**Sekarang user model Anda punya methods:**
+**Sekarang user model Anda punya methods (SUDAH BERFUNGSI):**
 
 ```php
 $user = Auth::user();
@@ -354,17 +355,17 @@ $user->isCustomer();       // true jika role='customer'
 $user->hasRole('admin');   // true jika role='admin'
 ```
 
-### Step 3: Create Middleware untuk Redirect Based on Role
+### Step 3: Create Middleware untuk Redirect Based on Role (Belum Dikerjakan)
 
-Sekarang kita create middleware yang akan redirect user ke dashboard mereka based on role setelah login.
+Kita perlu membuat middleware yang akan redirect user ke dashboard mereka berdasarkan role setelah login.
 
-**Command:**
+**Command yang perlu dijalankan:**
 
 ```bash
 sail artisan make:middleware AuthenticateByRole
 ```
 
-**File**: `app/Http/Middleware/AuthenticateByRole.php`
+**File yang akan dibuat**: `app/Http/Middleware/AuthenticateByRole.php`
 
 ```php
 <?php
@@ -408,7 +409,7 @@ class AuthenticateByRole
 }
 ```
 
-**Register middleware di bootstrap/app.php:**
+**Register middleware di bootstrap/app.php (Belum Dilakukan):**
 
 Buka `bootstrap/app.php` dan cari section `withMiddleware()`, lalu tambahkan:
 
@@ -424,7 +425,7 @@ use App\Http\Middleware\AuthenticateByRole;
 })
 ```
 
-**Bagaimana middleware ini bekerja:**
+**Bagaimana middleware ini akan bekerja:**
 
 ```
 1. User POST /login dengan credentials
@@ -439,17 +440,17 @@ use App\Http\Middleware\AuthenticateByRole;
      - NO: continue
 ```
 
-### Step 4: Create Admin Dashboard Controller
+### Step 4: Create Admin Dashboard Controller (Belum Dikerjakan)
 
-Sekarang kita buat controller untuk handle admin dashboard.
+Kita perlu membuat controller untuk handle admin dashboard.
 
-**Admin Dashboard Controller:**
+**Command yang perlu dijalankan:**
 
 ```bash
 sail artisan make:controller Admin/DashboardController
 ```
 
-**File**: `app/Http/Controllers/Admin/DashboardController.php`
+**File yang akan dibuat**: `app/Http/Controllers/Admin/DashboardController.php`
 
 ```php
 <?php
@@ -481,17 +482,17 @@ class DashboardController extends Controller
 }
 ```
 
-### Step 5: Create AdminOnly Middleware
+### Step 5: Create AdminOnly Middleware (Belum Dikerjakan)
 
-Sekarang kita buat middleware untuk protect admin routes:
+Kita perlu membuat middleware untuk protect admin routes:
 
-**Create Admin Middleware:**
+**Command yang perlu dijalankan:**
 
 ```bash
 sail artisan make:middleware AdminOnly
 ```
 
-**File**: `app/Http/Middleware/AdminOnly.php`
+**File yang akan dibuat**: `app/Http/Middleware/AdminOnly.php`
 
 ```php
 <?php
@@ -525,13 +526,13 @@ class AdminOnly
 
 Middleware `CustomerOnly` tidak diperlukan saat ini karena customer setelah login akan langsung diarahkan ke storefront (`/`). Namun, middleware ini akan diperlukan ketika Anda mengimplementasikan route-route khusus customer seperti `/customer/orders`, `/customer/profile`, dan lainnya.
 
-**Cara mengimplementasi di masa depan:**
+**Command yang akan diperlukan di masa depan:**
 
 ```bash
 sail artisan make:middleware CustomerOnly
 ```
 
-**File**: `app/Http/Middleware/CustomerOnly.php`
+**File yang akan dibuat**: `app/Http/Middleware/CustomerOnly.php`
 
 ```php
 <?php
@@ -560,7 +561,7 @@ class CustomerOnly
 }
 ```
 
-**Register middleware di bootstrap/app.php:**
+**Register middleware di bootstrap/app.php (Belum Dilakukan):**
 
 ```php
 use App\Http\Middleware\AdminOnly;
@@ -583,11 +584,11 @@ use App\Http\Middleware\AuthenticateByRole;
 })
 ```
 
-### Step 6: Update Routes
+### Step 6: Update Routes (Belum Dikerjakan)
 
-Sekarang kita update routes untuk add `/admin/\*`` routes.
+Sekarang kita perlu update routes untuk add `/admin/\*`` routes.
 
-** dan `/customer/\*File**: `routes/web.php`
+**File yang perlu diedit**: `routes/web.php`
 
 ```php
 <?php
@@ -791,6 +792,18 @@ Setelah login, Fortify redirect ke route named `'home'` by default. Anda bisa cu
 ```php
 'home' => '/dashboard',  // Default redirect setelah login
 ```
+
+#### Alternative: Configure Fortify Home Directly
+
+Sebagai alternatif dari menggunakan middleware, Anda dapat mengkonfigurasi Fortify's `home` langsung untuk melakukan redirect berdasarkan role:
+
+```php
+'home' => function () {
+    return auth()->user()->isAdmin() ? '/admin/dashboard' : '/';
+},
+```
+
+Pendekatan ini lebih sederhana karena tidak membutuhkan middleware tambahan, tetapi middleware approach memberikan fleksibilitas lebih besar untuk logika redirect yang kompleks di masa depan.
 
 Dengan middleware approach, lebih clean karena:
 
@@ -1735,35 +1748,42 @@ Selamat! Anda sudah memahami cara implement multi-actor authentication dalam Lar
 
 ### Apa yang sudah kita buat:
 
-✅ Menambahkan kolom `role` ke tabel users  
-✅ Membuat middleware redirect berdasarkan role  
-✅ Membuat controller untuk admin dashboard  
-✅ Membuat routes terpisah untuk /admin/\*  
-✅ Customer redirect ke storefront setelah login (tidak ada customer dashboard)  
-✅ Implementasi conditional rendering di frontend  
-✅ Membuat tests untuk multi-actor flows
+- ✅ Menambahkan kolom `role` ke tabel users
+- ✅ Memperbarui User model dengan role-related methods (isAdmin, isCustomer, isRole)
+- 🔲 Membuat middleware redirect berdasarkan role
+- 🔲 Membuat controller untuk admin dashboard
+- 🔲 Membuat routes terpisah untuk /admin/\*
+- ✅ Customer redirect ke storefront setelah login (tidak ada customer dashboard) - akan dihandle oleh middleware
+- 🔲 Implementasi conditional rendering di frontend
+- 🔲 Membuat tests untuk multi-actor flows
 
 ### Langkah berikutnya:
 
-1. **Implementasi seluruh Admin Area**
+1. **Buat middleware redirect berdasarkan role** (AuthenticateByRole)
+2. **Buat controller admin dashboard** (Admin/DashboardController)
+3. **Buat middleware admin only** (AdminOnly)
+4. **Update routes/web.php** untuk menambahkan admin routes
+5. **Register middleware di bootstrap/app.php**
+
+6. **Implementasi seluruh Admin Area**
     - Product management (CRUD)
     - Order management
     - Analytics dashboard
 
-2. **Implementasi Customer Features** (di masa depan)
+7. **Implementasi Customer Features** (di masa depan)
     - Cart functionality
     - Order history & tracking
     - Address management
     - Order checkout flow
 
-3. **Implementasi /customer/\* routes**
+8. **Implementasi /customer/\* routes**
     - Aktifkan middleware CustomerOnly
     - Tambahkan routes untuk profile, orders, addresses, dll
 
-4. **Enhanced Authorization**
+9. **Enhanced Authorization**
     - Laravel Gates & Policies untuk granular permissions
 
-5. **Frontend Improvements**
+10. **Frontend Improvements**
     - Responsive admin dashboard
     - Customer-friendly storefront
     - Cart dan checkout UI
@@ -1773,31 +1793,56 @@ Selamat! Anda sudah memahami cara implement multi-actor authentication dalam Lar
 ```
 NEW/MODIFIED FILES:
 ├── database/migrations/
-│   └── [timestamp]_add_role_to_users_table.php  (NEW)
+│   └── 2026_03_12_211457_add_role_to_users_table.php  (DONE)
 ├── app/Models/
-│   └── User.php  (MODIFIED - add role column & methods)
+│   └── User.php  (MODIFIED - add role column & methods - DONE)
 ├── app/Http/Middleware/
-│   ├── AuthenticateByRole.php  (NEW)
-│   ├── AdminOnly.php  (NEW)
-│   └── CustomerOnly.php  (NEW - untuk masa depan)
+│   ├── AuthenticateByRole.php  (NEEDED)
+│   ├── AdminOnly.php  (NEEDED)
+│   └── CustomerOnly.php  (NEEDED - untuk masa depan)
 ├── app/Http/Controllers/
-│   └── Admin/DashboardController.php  (NEW)
+│   └── Admin/DashboardController.php  (NEEDED)
 ├── routes/
-│   ├── web.php  (MODIFIED)
-│   └── admin.php  (NEW)
+│   ├── web.php  (NEEDED - add admin routes)
+│   └── admin.php  (NEEDED - optional organization)
 │   └── customer.php  (CATATAN: belum diperlukan saat ini)
 ├── bootstrap/
-│   └── app.php  (MODIFIED - register middleware)
+│   └── app.php  (NEEDED - register middleware)
 ├── database/factories/
-│   └── UserFactory.php  (MODIFIED - add admin/customer states)
+│   └── UserFactory.php  (NEEDED - add admin/customer states for testing)
 ├── resources/js/
-│   ├── types/auth.ts  (MODIFIED - add role to User type)
-│   └── lib/auth.ts  (NEW - helper functions)
-└── tests/Feature/Auth/
-    ├── AdminAuthenticationTest.php  (NEW)
-    ├── CustomerAuthenticationTest.php  (NEW)
-    └── AuthenticateByRoleTest.php  (NEW)
+│   ├── types/auth.ts  (NEEDED - add role to User type)
+│   └── lib/auth.ts  (NEEDED - helper functions)
 ```
+
+NEW/MODIFIED FILES:
+├── database/migrations/
+│ └── [timestamp]\_add_role_to_users_table.php (NEW)
+├── app/Models/
+│ └── User.php (MODIFIED - add role column & methods)
+├── app/Http/Middleware/
+│ ├── AuthenticateByRole.php (NEW)
+│ ├── AdminOnly.php (NEW)
+│ └── CustomerOnly.php (NEW - untuk masa depan)
+├── app/Http/Controllers/
+│ └── Admin/DashboardController.php (NEW)
+├── routes/
+│ ├── web.php (MODIFIED)
+│ └── admin.php (NEW)
+│ └── customer.php (CATATAN: belum diperlukan saat ini)
+├── bootstrap/
+│ └── app.php (MODIFIED - register middleware)
+├── database/factories/
+│ └── UserFactory.php (MODIFIED - add admin/customer states)
+├── resources/js/
+│ ├── types/auth.ts (MODIFIED - add role to User type)
+│ └── lib/auth.ts (NEW - helper functions)
+└── tests/Feature/Auth/
+├── AdminAuthenticationTest.php (NEW)
+├── CustomerAuthenticationTest.php (NEW)
+└── AuthenticateByRoleTest.php (NEW)
+
+````
 
 ### Quick Reference Commands
 
@@ -1824,7 +1869,7 @@ User::factory()->customer()->create(['email' => 'customer@test.com', 'password' 
 
 # Run tests
 sail artisan test --filter=Auth --compact
-```
+````
 
 ---
 
